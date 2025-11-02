@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  yoswit-mqtt:
+    build:
+      context: .
+    container_name: yoswit-homebridge-mqtt
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    environment:
+      # Yoswit API Configuration - Update these with your credentials
+      - BASE_URL=your-yoswit-base-url.com
+      - USERNAME=your-yoswit-username
+      - PASSWORD=your-yoswit-password
+      - APP_ID=your-app-id

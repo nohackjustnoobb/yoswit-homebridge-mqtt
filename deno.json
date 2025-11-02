@@ -1,0 +1,14 @@
+{
+  "tasks": {
+    "dev": "deno run --env-file --allow-env --allow-net --watch src/main.ts",
+    "dev:debug": "LOG_LEVEL=DEBUG deno run --env-file --allow-env --allow-net --watch src/main.ts"
+  },
+  "imports": {
+    "@sitnik/nanoid": "jsr:@sitnik/nanoid@^5.1.5",
+    "@std/assert": "jsr:@std/assert@1",
+    "@std/crypto": "jsr:@std/crypto@^1.0.5",
+    "@std/encoding": "jsr:@std/encoding@^1.0.10",
+    "aedes": "npm:aedes@^0.51.3",
+    "mqtt": "npm:mqtt@^5.14.1"
+  }
+}
