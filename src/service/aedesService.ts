@@ -22,6 +22,7 @@ class AedesService {
   port: number;
   options: AedesServiceOptions;
   aedes: Aedes.default;
+  private bleDeviceCache: Map<string, string> = new Map();
 
   constructor(port: number, options: AedesServiceOptions) {
     this.port = port;
@@ -31,7 +32,12 @@ class AedesService {
 
   handleSwitchPayload(macAddress: string, status: string) {
     const statusInt = parseInt(status, 16);
-    const lightStates = statusInt.toString(2).padStart(4, "0").slice(0, -1);
+    const lightStates = statusInt
+      .toString(2)
+      .padStart(4, "0")
+      .slice(0, -1)
+      .split("")
+      .reverse();
     const devices = service.deviceService?.getByMacAddress(macAddress);
 
     for (const device of devices || []) {
@@ -50,15 +56,17 @@ class AedesService {
       if (device.roomName)
         service_name = `${service_name} (${device.roomName})`;
 
+      const payload = JSON.stringify({
+        name: device.id,
+        service_name,
+        characteristic: "On",
+        value: isOn === "1",
+      });
+
       this.aedes.publish(
         {
           topic,
-          payload: JSON.stringify({
-            name: device.id,
-            service_name,
-            characteristic: "On",
-            value: isOn,
-          }),
+          payload,
           qos: 1,
           retain: false,
           dup: false,
@@ -74,6 +82,7 @@ class AedesService {
             logger.info(
               `Published status update for device ${device.id} to topic ${topic}`
             );
+            logger.debug(`Payload: ${payload}`);
           }
         }
       );
@@ -107,17 +116,27 @@ class AedesService {
     }
   }
 
-  private handleBleDeviceMessage(payloadString: string) {
+  private extractAndCacheBleDeviceMessage(payloadString: string) {
     // Split payload: first 17 chars are MAC, rest is data
     const macAddress = payloadString.slice(0, 17);
     const data = payloadString.slice(17);
 
+    // Cache the data for this MAC address
+    this.bleDeviceCache.set(macAddress, data);
+
+    logger.debug(`Cached BLE device data: MAC=${macAddress}, Data=${data}`);
+
+    // Handle the data
+    this.handleBleDeviceData(macAddress, data);
+  }
+
+  private handleBleDeviceData(macAddress: string, data: string) {
     // Extract device type (4th to last to last-1 char) and status (last char)
     const deviceType = data.slice(-4, -1);
     const status = data.slice(-1);
 
     logger.debug(
-      `Received BLE device payload: MAC=${macAddress}, Data=${data}, DeviceType=${deviceType}, Status=${status}`
+      `Handling BLE device data: MAC=${macAddress}, Data=${data}, DeviceType=${deviceType}, Status=${status}`
     );
 
     switch (deviceType) {
@@ -149,7 +168,7 @@ class AedesService {
 
     if (packet.topic === "yoswit/ble/devices") {
       const payloadString = packet.payload.toString();
-      this.handleBleDeviceMessage(payloadString);
+      this.extractAndCacheBleDeviceMessage(payloadString);
     }
   }
 
@@ -215,6 +234,11 @@ class AedesService {
     const devices = Object.values(service.deviceService?.devices || {});
 
     for (const device of devices) this.publishDeviceAddition(device, topic);
+
+    // Replay cached BLE device data for this new subscription
+    logger.info(`Replaying cached BLE device data for client ${client.id}`);
+    for (const [macAddress, data] of this.bleDeviceCache.entries())
+      this.handleBleDeviceData(macAddress, data);
   }
 
   private setupEventHandlers() {
