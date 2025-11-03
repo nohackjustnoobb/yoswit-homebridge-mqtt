@@ -29,18 +29,9 @@ class AedesService {
     this.aedes = Aedes.createBroker();
   }
 
-  private parseSwitchStatus(status: string): boolean[] {
-    const statusInt = parseInt(status, 16);
-    let statusBin = statusInt.toString(2).padStart(4, "0");
-    statusBin = statusBin.slice(0, -1);
-    return statusBin
-      .split("")
-      .reverse()
-      .map((bit) => bit === "1");
-  }
-
   handleSwitchPayload(macAddress: string, status: string) {
-    const lightStates = this.parseSwitchStatus(status);
+    const statusInt = parseInt(status, 16);
+    const lightStates = statusInt.toString(2).padStart(4, "0").slice(0, -1);
     const devices = service.deviceService?.getByMacAddress(macAddress);
 
     for (const device of devices || []) {
@@ -162,29 +153,14 @@ class AedesService {
     }
   }
 
-  private getServiceTypeForDevice(deviceType: DeviceType): string | null {
-    switch (deviceType) {
-      case DeviceType.SWITCH:
-        return "Lightbulb";
-      default:
-        return null;
-    }
-  }
-
-  private publishDeviceAddition(device: Device, topic: string) {
+  private addSwitch(device: Device, topic: string) {
     let service_name = device.name || "Unnamed Device";
     if (device.roomName) service_name = `${service_name} (${device.roomName})`;
-
-    const serviceType = this.getServiceTypeForDevice(device.type);
-    if (!serviceType) {
-      logger.warn("Unknown device type for device", device);
-      return;
-    }
 
     const payload = {
       name: device.id,
       service_name,
-      service: serviceType,
+      service: "Lightbulb",
     };
 
     this.aedes.publish(
@@ -209,6 +185,17 @@ class AedesService {
         }
       }
     );
+  }
+
+  private publishDeviceAddition(device: Device, topic: string) {
+    switch (device.type) {
+      case DeviceType.SWITCH:
+        this.addSwitch(device, topic);
+        break;
+      default:
+        logger.warn("Unknown device type for device", device);
+        break;
+    }
   }
 
   private handleSubscription(

@@ -1,6 +1,7 @@
 import { md5 } from "../utils.ts";
 import service from "./service.ts";
 import { Logger } from "../logger.ts";
+import { privateEncrypt } from "node:crypto";
 
 const logger = Logger.create("DeviceService");
 
@@ -151,13 +152,20 @@ class DeviceService {
     const position = device.index;
     const isOn = on;
 
-    const reversedMac = macAddress.split(":").reverse().join("");
-    const onOffStatus = isOn ? position.toString(16) : "0";
-    const value = `02${reversedMac}8000${position.toString(
-      16
-    )}${onOffStatus}00`;
+    const bits = Array(8).fill(0);
+    bits[4 - position] = 1;
+    if (isOn) bits[8 - position] = 1;
+    const data = parseInt(bits.join(""), 2)
+      .toString(16)
+      .toUpperCase()
+      .padStart(2, "0");
 
-    const data = {
+    const reversedMac = macAddress.split(":").reverse().join("");
+    const value = `02${reversedMac}8000${data}00`;
+
+    const topic = `cmd/${await md5(await md5(gatewayId))}`;
+    logger.debug(`Publishing MQTT command to topic: ${topic}`);
+    service.mqttService?.publish(topic, {
       command: "Control",
       function: "bleHelper.perform",
       params: [
@@ -172,11 +180,7 @@ class DeviceService {
       ],
       callback: "",
       raw: "",
-    };
-
-    const topic = `cmd/${await md5(await md5(gatewayId))}`;
-    logger.debug(`Publishing MQTT command to topic: ${topic}`);
-    service.mqttService?.publish(topic, data);
+    });
   }
 }
 

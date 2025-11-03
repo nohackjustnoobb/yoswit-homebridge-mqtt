@@ -69,14 +69,6 @@ deno task dev
 deno task dev:debug
 ```
 
-## License
-
-MIT
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
 ## Optional ESP32 BLE Scanner Module
 
 An optional module is available that uses an ESP32 to scan BLE advertisement data from Yoswit devices. This module helps keep device status in sync, especially when the physical button on the device is used.
@@ -84,3 +76,11 @@ An optional module is available that uses an ESP32 to scan BLE advertisement dat
 **Note:** Without this module, device status will not update in Homebridge if you use the physical button on the device.
 
 You can find the ESP32 BLE scanner module here: [yoswit-ble-scanner](https://github.com/nohackjustnoobb/yoswit-ble-scanner.git)
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
