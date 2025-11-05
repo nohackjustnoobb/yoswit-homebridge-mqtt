@@ -1,12 +1,12 @@
 import { md5 } from "../utils.ts";
 import service from "./service.ts";
 import { Logger } from "../logger.ts";
-import { privateEncrypt } from "node:crypto";
 
 const logger = Logger.create("DeviceService");
 
 enum DeviceType {
   SWITCH,
+  DIMMING,
 }
 
 interface Device {
@@ -62,63 +62,100 @@ class DeviceService {
         continue;
       }
 
-      deviceInfo[deviceData.name].macAddress = deviceData.mac_address;
+      deviceInfo[deviceData.name].macAddress =
+        deviceData.mac_address.toLowerCase();
     }
 
     const devicesManager = new DeviceService();
 
     for (const profileSubdevice of data.profile.profile_subdevice) {
       try {
-        if (
-          !profileSubdevice.device_button_group ||
-          !profileSubdevice.device_button_group.startsWith("ONOFF GANG")
-        ) {
-          logger.warn(
-            `Unsupported device button group: ${profileSubdevice.device_button_group}`
-          );
-          continue;
-        }
-
-        const index = Number(
-          profileSubdevice.device_button_group.replace("ONOFF GANG", "")
-        );
-        const id = `${profileSubdevice.device}-${index}`;
-        if (devicesManager.devices[id]) {
-          logger.warn(`Duplicate device id: ${id}`);
-          continue;
-        }
-
-        const guid = profileSubdevice.device;
-        if (!guid) {
+        if (!profileSubdevice.device_button_group) {
           logger.warn("Invalid profile subdevice data:", profileSubdevice);
           continue;
         }
 
-        let roomName = profileSubdevice.room_name;
-        if (roomName) roomName = roomName.replace(/\[\/?en\]/g, "").trim();
+        if (profileSubdevice.device_button_group.startsWith("ONOFF GANG")) {
+          const name = profileSubdevice.title as string | undefined;
+          // Skip devices with V1 or V2 because they are likely to be a internal on/off switch for the dimming device
+          if (name && (name.includes("V1") || name.includes("V2"))) {
+            logger.warn("Skipping internal switch device:", name);
+            continue;
+          }
 
-        if (
-          !deviceInfo[profileSubdevice.device] ||
-          !deviceInfo[profileSubdevice.device]?.macAddress ||
-          !deviceInfo[profileSubdevice.device]?.gateway
-        ) {
-          logger.warn(
-            `Missing device info for ${profileSubdevice.device}:`,
-            deviceInfo[profileSubdevice.device]
+          const index = Number(
+            profileSubdevice.device_button_group.replace("ONOFF GANG", "")
           );
-          continue;
-        }
+          const id = `${profileSubdevice.device}-${index}`;
+          if (devicesManager.devices[id]) {
+            logger.warn(`Duplicate device id: ${id}`);
+            continue;
+          }
 
-        devicesManager.devices[id] = {
-          id,
-          guid,
-          name: profileSubdevice.title,
-          type: DeviceType.SWITCH,
-          index,
-          macAddress: deviceInfo[profileSubdevice.device]!.macAddress!,
-          roomName,
-          gatewayId: deviceInfo[profileSubdevice.device]!.gateway!,
-        };
+          const guid = profileSubdevice.device;
+          if (!guid) {
+            logger.warn("Invalid profile subdevice data:", profileSubdevice);
+            continue;
+          }
+
+          let roomName = profileSubdevice.room_name;
+          if (roomName) roomName = roomName.replace(/\[\/?en\]/g, "").trim();
+
+          if (
+            !deviceInfo[profileSubdevice.device] ||
+            !deviceInfo[profileSubdevice.device]?.macAddress ||
+            !deviceInfo[profileSubdevice.device]?.gateway
+          ) {
+            logger.warn(
+              `Missing device info for ${profileSubdevice.device}:`,
+              deviceInfo[profileSubdevice.device]
+            );
+            continue;
+          }
+
+          devicesManager.devices[id] = {
+            id,
+            guid,
+            name,
+            type: DeviceType.SWITCH,
+            index,
+            macAddress: deviceInfo[profileSubdevice.device]!.macAddress!,
+            roomName,
+            gatewayId: deviceInfo[profileSubdevice.device]!.gateway!,
+          };
+        } else if (profileSubdevice.device_button_group.startsWith("DIMMING")) {
+          // DIMMING devices are always single channel
+          const index = 0;
+          const id = `${profileSubdevice.device}-${index}`;
+          if (devicesManager.devices[id]) {
+            logger.warn(`Duplicate device id: ${id}`);
+            continue;
+          }
+
+          const guid = profileSubdevice.device;
+          if (!guid) {
+            logger.warn("Invalid profile subdevice data:", profileSubdevice);
+            continue;
+          }
+
+          let roomName = profileSubdevice.room_name;
+          if (roomName) roomName = roomName.replace(/\[\/?en\]/g, "").trim();
+
+          devicesManager.devices[id] = {
+            id,
+            guid,
+            name: profileSubdevice.title,
+            type: DeviceType.DIMMING,
+            index,
+            macAddress: deviceInfo[profileSubdevice.device]!.macAddress!,
+            roomName,
+            gatewayId: deviceInfo[profileSubdevice.device]!.gateway!,
+          };
+        } else {
+          logger.warn(
+            `Unsupported device button group: ${profileSubdevice.device_button_group}`
+          );
+        }
       } catch (_e) {
         logger.warn(
           `Invalid device button group format: ${profileSubdevice.device_button_group}`
@@ -135,6 +172,10 @@ class DeviceService {
     return Object.values(this.devices).filter(
       (device) => device.macAddress === macAddress
     );
+  }
+
+  getByName(name: string): Device | undefined {
+    return this.devices[name];
   }
 
   async switchDevice(id: string, on: boolean) {
@@ -165,7 +206,45 @@ class DeviceService {
 
     const topic = `cmd/${await md5(await md5(gatewayId))}`;
     logger.debug(`Publishing MQTT command to topic: ${topic}`);
-    service.mqttService?.publish(topic, {
+    await service.mqttService?.publish(topic, {
+      command: "Control",
+      function: "bleHelper.perform",
+      params: [
+        {
+          action: "write",
+          guid: guid,
+          mac_address: macAddress,
+          service_id: "ff80",
+          char_id: "ff81",
+          value: value,
+        },
+      ],
+      callback: "",
+      raw: "",
+    });
+  }
+
+  async dimmingDevice(id: string, brightness: number) {
+    logger.debug(`Dimming device ${id} to brightness ${brightness}`);
+
+    if (!this.devices[id]) throw new Error(`Device with id ${id} not found`);
+
+    if (this.devices[id].type !== DeviceType.DIMMING)
+      throw new Error(`Device with id ${id} is not a dimming device`);
+
+    const device = this.devices[id];
+    const gatewayId = device.gatewayId;
+    const macAddress = device.macAddress;
+    const guid = device.guid;
+
+    const scaledBrightness = Math.round((brightness / 100) * 255);
+    const data = scaledBrightness.toString(16).padStart(2, "0").toUpperCase();
+    const reversedMac = macAddress.split(":").reverse().join("");
+    const value = `02${reversedMac}8900${data}`;
+
+    const topic = `cmd/${await md5(await md5(gatewayId))}`;
+    logger.debug(`Publishing MQTT command to topic: ${topic}`);
+    await service.mqttService?.publish(topic, {
       command: "Control",
       function: "bleHelper.perform",
       params: [
